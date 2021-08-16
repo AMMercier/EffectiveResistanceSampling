@@ -1,4 +1,5 @@
 import numpy as np
+import scipy.sparse
 from matplotlib import pyplot as plt
 from HeapObject import heappush, heappop
 import scipy.stats as st
@@ -6,6 +7,9 @@ import Spielman_Sparse as spl
 import pandas as pd
 import multiprocessing as mp
 from functools import partial
+import time as tm
+import sys
+import gc
 
 
 # # Find neighbors of a given node
@@ -132,18 +136,18 @@ from functools import partial
 def SIR_fast2(network, beta, gamma, pzs, t_max, neighbor_dict, seed=None):
     rng = np.random.default_rng(seed)
 
-    n = network.shape[0]
-    times, S, I, R = [0], [1] * n, [0] * n, [0] * n
+    n = len(neighbor_dict)
+    del network
+    times, S, I, R = [0], np.zeros((1, n)) + 1, np.zeros((1, n)), np.zeros((1, n))
+    events = np.zeros((1, n)) - 1
     for pz in pzs:
-        I[pz], S[pz] = 1, 0
-    S_t, I_t, R_t = [sum(S)], [sum(I)], [sum(R)]
+        I[0, pz], S[0, pz] = 1, 0
+    S_t, I_t, R_t = [np.sum(S)], [np.sum(I)], [np.sum(R)]  # Way to replace lists with arrays?
     t = 0
-    events = []
 
     Q = []
     for pz in pzs:
-        neighbors = neighbor_dict[pz]
-        first_events_edges = [(rng.exponential(1 / (beta * edge[2])), edge[0], edge[1]) for edge in neighbors]
+        first_events_edges = [(rng.exponential(1 / (beta * edge[2])), edge[0], edge[1]) for edge in neighbor_dict[pz]]
         first_events_nodes = (rng.exponential(1 / gamma), pz)
         heappush(Q, first_events_nodes)
         for x in first_events_edges:
@@ -152,30 +156,31 @@ def SIR_fast2(network, beta, gamma, pzs, t_max, neighbor_dict, seed=None):
     while t < t_max:
         if len(Q) != 0:
             S, I, R, Q, t, event, rng = SIR_step2(neighbor_dict, S, I, R, beta, gamma, Q, t, rng)
-            if sum(I) == 0:
+            if np.sum(I) == 0:
                 times.append(t_max)
-                S_t.append(sum(S))
-                I_t.append(sum(I))
-                R_t.append(sum(R))
+                S_t.append(np.sum(S))
+                I_t.append(np.sum(I))
+                R_t.append(np.sum(R))
                 SIR_t = np.array([times, S_t, I_t, R_t]).T
-                size = n - sum(S)
+                size = n - np.sum(S)
                 return SIR_t, size, events
         else:
             times.append(t_max)
-            S_t.append(sum(S))
-            I_t.append(sum(I))
-            R_t.append(sum(R))
+            S_t.append(np.sum(S))
+            I_t.append(np.sum(I))
+            R_t.append(np.sum(R))
             SIR_t = np.array([times, S_t, I_t, R_t]).T
-            size = n - sum(S)
+            size = n - np.sum(S)
             return SIR_t, size, events
         if isinstance(event, tuple):
             times.append(t)
-            events.append(event)
-            S_t.append(sum(S))
-            I_t.append(sum(I))
-            R_t.append(sum(R))
+            if len(event) == 3:
+                events[0, event[2]] = event[0]
+            S_t.append(np.sum(S))
+            I_t.append(np.sum(I))
+            R_t.append(np.sum(R))
     SIR_t = np.array([times, S_t, I_t, R_t]).T
-    size = n - sum(S)
+    size = n - np.sum(S)
     return SIR_t, size, events
 
 
@@ -198,12 +203,12 @@ def SIR_step2(neighbor_dict, S, I, R, beta, gamma, Q, t, rng):
     t = event[0]
     if len(event) == 3:
         u, v = event[1], event[2]
-        if I[u] == 1 and S[v] == 1:
-            S[v] = 0;
-            I[v] = 1
-            neighbors = neighbor_dict[v]
-            events_edges = [(t + rng.exponential(1 / (beta * edge[2])), edge[0], edge[1]) for edge in neighbors if
-                            S[edge[1]] == 1]
+        if I[0, u] == 1 and S[0, v] == 1:
+            S[0, v] = 0
+            I[0, v] = 1
+            events_edges = [(t + rng.exponential(1 / (beta * edge[2])), edge[0], edge[1]) for edge in neighbor_dict[v]
+                            if
+                            S[0, edge[1]] == 1]
             event_node = (t + rng.exponential(1 / gamma), v)
             heappush(Q, event_node)
             for x in events_edges:
@@ -212,12 +217,116 @@ def SIR_step2(neighbor_dict, S, I, R, beta, gamma, Q, t, rng):
             event = False
             return S, I, R, Q, t, event, rng
     else:
-        if I[event[1]] == 1:
+        if I[0, event[1]] == 1:
             u = event[1]
-            R[u], S[u], I[u] = 1, 0, 0
+            R[0, u], S[0, u], I[0, u] = 1, 0, 0
         else:
             event = False
     return S, I, R, Q, t, event, rng
+
+
+def SIR_fast3(network, beta, gamma, pzs, t_max, neighbor_dict, seed=None):
+    start = tm.time()
+    rng = np.random.default_rng(seed)
+    heap_track = 0
+
+    n = len(neighbor_dict)
+    times, S, I, R = [0], np.zeros((1, n)) + 1, np.zeros((1, n)), np.zeros((1, n))
+    events = np.zeros((1, n)) - 1
+    for pz in pzs:
+        I[0, pz], S[0, pz] = 1, 0
+    S_t, I_t, R_t = [np.sum(S)], [np.sum(I)], [np.sum(R)]  # Way to replace lists with arrays?
+    t = 0
+
+    Q = []
+    for pz in pzs:
+        first_events_edges = [(rng.exponential(1 / (beta * network[pz, edge])), pz, edge) for edge in neighbor_dict[pz]]
+        first_events_nodes = (rng.exponential(1 / gamma), pz)
+        heappush(Q, first_events_nodes);
+        heap_track += 1
+        for x in first_events_edges:
+            heappush(Q, x);
+            heap_track += 1
+
+    while t < t_max:
+        if len(Q) != 0:
+            S, I, R, Q, t, event, rng, heap_track = SIR_step3(network, neighbor_dict, S, I, R, beta, gamma, Q, rng,
+                                                              heap_track)
+            if np.sum(I) == 0:
+                times.append(t_max)
+                S_t.append(np.sum(S))
+                I_t.append(np.sum(I))
+                R_t.append(np.sum(R))
+                SIR_t = np.array([times, S_t, I_t, R_t]).T
+                size = n - np.sum(S)
+                end = tm.time()
+                total = end - start
+                return SIR_t, size, events, total, heap_track
+        else:
+            times.append(t_max)
+            S_t.append(np.sum(S))
+            I_t.append(np.sum(I))
+            R_t.append(np.sum(R))
+            SIR_t = np.array([times, S_t, I_t, R_t]).T
+            size = n - np.sum(S)
+            end = tm.time()
+            total = end - start
+            return SIR_t, size, events, total, heap_track
+        if isinstance(event, tuple):
+            times.append(t)
+            if len(event) == 3:
+                events[0, event[2]] = event[0]
+            S_t.append(np.sum(S))
+            I_t.append(np.sum(I))
+            R_t.append(np.sum(R))
+    SIR_t = np.array([times, S_t, I_t, R_t]).T
+    size = n - np.sum(S)
+    end = tm.time()
+    total = end - start
+    return SIR_t, size, events, total, heap_track
+
+
+# Move to next event in Fast_SIR
+# Par:
+## A; adj matrix
+## S; 1xn dim array to tag nodes susceptible
+## I; 1xn dim array to tag nodes infected
+## R; 1xn dim array to tag nodes recovered
+## beta; infection rate - scaled (see above)
+## gamma; recovery rate
+## Q; heap of events
+### Q is structured (time, edge0, edge1) for edge infection events where edge0 is source
+### Q is structured (time, node) for node recovery events
+## t; current time of sim
+## rng; probability generating function (see above) - not current
+def SIR_step3(network, neighbor_dict, S, I, R, beta, gamma, Q, rng, heap_track):
+    rng = rng
+    event = heappop(Q);
+    heap_track = heap_track - 1
+    t = event[0]
+    if len(event) == 3:
+        u, v = event[1], event[2]
+        if I[0, u] == 1 and S[0, v] == 1:
+            S[0, v] = 0
+            I[0, v] = 1
+            events_edges = [(t + rng.exponential(1 / (beta * network[v, edge])), v, edge) for edge in neighbor_dict[v]
+                            if S[0, edge] == 1]
+            event_node = (t + rng.exponential(1 / gamma), v)
+            heappush(Q, event_node);
+            heap_track += 1
+            for x in events_edges:
+                heappush(Q, x);
+                heap_track += 1
+        else:
+            event = False
+            return S, I, R, Q, t, event, rng, heap_track
+    else:
+        if I[0, event[1]] == 1:
+            u = event[1]
+            R[0, u], S[0, u], I[0, u] = 1, 0, 0
+        else:
+            event = False
+    return S, I, R, Q, t, event, rng, heap_track
 
 
 # Fast SI continuous-time, gillespie algorithm
@@ -487,31 +596,6 @@ def EEI_SIR(num, network, gamma, beta, pzs, t_max, seed):
     return H / num
 
 
-def Thresh(E_list, weights, per):
-    m = int(np.ceil(per * len(weights)))
-    n_weights = [0] * len(weights)
-    weights = list(enumerate(weights))
-    weights = sorted(weights, key=lambda tup: tup[1], reverse=True)
-    weights = weights[0:m]
-    for i in weights:
-        n_weights[i[0]] = i[1]
-    return E_list, n_weights
-
-
-def getSIRAvg(SIR, res, diff, n, S, I, R):
-    i = 0
-    for r in res:
-        t_c = SIR[SIR[:, 0] <= r]
-        t_c = t_c[t_c[:, 0] > r - diff]
-        if len(t_c) == 0:
-            t_c = [r, 0, 0, 0]
-        else:
-            t = t_c[-1, :]
-        S[i, n], I[i, n], R[i, n] = t[1], t[2], t[3]
-        i += 1
-    return S, I, R
-
-
 def confidence_interval(data, conf=0.95, column='S'):
     n1, n2 = np.shape(data)
     lmh = np.zeros((n1, 3))
@@ -525,10 +609,9 @@ def confidence_interval(data, conf=0.95, column='S'):
 
 
 def getArrivals(events, ari):
-    events = [e for e in events if len(e) == 3]
-    for e in events:
-        t, inf_node = e[0], e[2]
-        ari[inf_node].append(t)
+    for i in range(0, events.shape[1]):
+        if events[0, i] >= 0:
+            ari[i].append(events[0, i])
     return ari
 
 
@@ -568,28 +651,155 @@ def simulations(num, res, network, beta, gamma, pzs, t_max, seed):
 
 
 def SIR(seed, network, beta, gamma, pzs, t_max, neighbor_dict):
-    return SIR_fast2(network, beta, gamma, pzs, t_max, neighbor_dict, seed)
+    return SIR_fast3(network, beta, gamma, pzs, t_max, neighbor_dict, seed)
 
 
-def par_SIR(num, network, beta, gamma, pzs, t_max, seed, workers):
-    partial_func = partial(SIR, network=network.graph, beta=beta, gamma=gamma, pzs=pzs, t_max=t_max,
-                           neighbor_dict=network.neighbors)
+def par_SIR(num, network, neighbors, beta, gamma, pzs, t_max, seed, workers):
+    partial_func = partial(SIR, network=network, beta=beta, gamma=gamma, pzs=pzs, t_max=t_max,
+                           neighbor_dict=neighbors)
     rng = np.random.default_rng(seed)
-    seeds = rng.integers(0, 10 ** 16, num).tolist()
+    seeds = rng.integers(0, 2 ** 32, num).tolist()
     with mp.Pool(processes=workers) as pool:
-        multiple_results = pool.map(partial_func, seeds, chunksize=num//workers)
-
-    #
+        multiple_results = pool.map(partial_func, seeds, chunksize=num // workers)
 
     return multiple_results
 
 
+def getSIRAvg(SIR, res, diff, n, S, I, R):
+    i = 0
+    for r in res:
+        t_c = SIR[SIR[:, 0] <= r]
+        t_c = t_c[t_c[:, 0] > r - diff]
+        if len(t_c) == 0:
+            t_c = [r, 0, 0, 0]
+        else:
+            t = t_c[-1, :]
+        S[i, n], I[i, n], R[i, n] = t[1], t[2], t[3]
+        i += 1
+    return S, I, R
+
+
+# SIR_t, size, events
+def concat_par(n, ret, res, t_max):
+    num = len(ret)
+    sizes = []
+    ari = {}
+    for i in range(n):
+        ari[i] = []
+    res, diff = np.linspace(0, t_max, res, retstep=True)
+    S, I, R = np.zeros((len(res), num)), np.zeros((len(res), num)), np.zeros((len(res), num))
+    times = np.zeros((1, num))
+    heap_sizes = np.zeros((1, num))
+    for i in range(0, len(ret)):
+        # Find SIR events
+        SIR = ret[i][0]
+        S, I, R = getSIRAvg(SIR, res, diff, i, S, I, R)
+
+        # Save epidemic sizes
+        size = ret[i][1]
+        sizes.append(size)
+
+        # Save arrival times for each
+        events = ret[i][2]
+        ari = getArrivals(events, ari)
+
+        # Save array of times
+        times[0, i] = ret[i][3]
+
+        # Save array of heap sizes
+        heap_sizes[0, i] = ret[i][4]
+
+    time = pd.DataFrame.from_dict({'t': res})
+    S = confidence_interval(S, column='S')
+    I = confidence_interval(I, column='I')
+    R = confidence_interval(R, column='R')
+    avg_SIR = pd.concat([time, S, I, R], axis=1)
+    return ari, avg_SIR, sizes, times, heap_sizes
+
+
 if __name__ == '__main__':
     import Network as nt
+    import pickle
+    import networkx as nx
+    import time
+    from sys import getsizeof
 
     A = nt.Network.NCCom()
-    test = par_SIR(100, A, 5 / 2183, 1, [350], 10, 100, 20)
-    print(len(list(test)))
+    numnode = A.nodenum()
+    ThrNet = spl.Thresh(numnode, A.E_list, A.weights, 0.05)
+    G = nx.from_scipy_sparse_matrix(ThrNet)
+    ThrNet = nt.Network(None, None, G)
+
+    ThrNet_adj = ThrNet.graph
+    ThrNet_nbrs = ThrNet.neighbors
+    ThrNet_nodenum = ThrNet.nodenum()
+    del ThrNet, G
+
+    # Run sims
+    ThrNet_par = par_SIR(1000, ThrNet_adj, ThrNet_nbrs, 5 / 2183, 1, [350], 7, 100, 30)
+    ThrNet_ari, ThrNet_SIR, ThrNet_szs, ThrNet_times, ThrNet_heap = concat_par(ThrNet_nodenum, ThrNet_par, 30, 7)
+    ThrNet_SIR.to_csv('NCThrNet05.csv', index=False)
+
+    # A = nt.Network(None, None, nx.read_graphml('US_tract.graphml'))
+    # A = A.graph
+    # scipy.sparse.save_npz('US_tract_graph.npz', A)
+    # neighbors = A.neighbors
+    # print('Done!')
+    # with open('US_Neighbors_Org.pkl', 'wb') as f:
+    #     pickle.dump(neighbors, f)
+    # start = time.time()
+    # A = nt.Network(None, None, nx.read_graphml('US_tract.graphml'))
+    # end = time.time()
+    # print(end - start)
+    #
+    # q = int(A.edgenum() * 0.06)
+    #
+    # start = time.time()
+    # effR = A.effR(0.1, 'kts')
+    # end = time.time()
+    # print(end - start)
+    #
+    # start = time.time()
+    # A_spl = A.spl(q,effR,1000)
+    # end = time.time()
+    # print(end - start)
+    #
+    # neighbors = A_spl.neighbors
+    # print(A_spl.edgenum())
+    #
+    # with open('venv/US_Neighbors_Spl.pkl', 'wb') as f:
+    #     pickle.dump(neighbors, f)
+
+    # with open('US_Neighbors_Org.pkl', 'rb') as f:
+    #     neighbors = pickle.load(f)
+    # #
+    # numnode = len(neighbors)
+    #
+    # # print(sys.getsizeof(neighbors))
+    # network = scipy.sparse.load_npz('US_tract_graph.npz')
+    # print('Done!')
+    # # print(A)
+    # # time.sleep(30)
+    # start = time.time()
+    #
+    # test = par_SIR(1000, network, neighbors, 10 / 2183, 1, [1000], 10, 100, 21)
+    #
+    # end = time.time()
+    # print(end - start)
+    #
+    # ari, avg_SIR, sizes = concat_par(numnode, test, 30, 10)
+    # gc.collect()
+    #
+    # with open('US_Arrivals_Org.pkl', 'wb') as f:
+    #     pickle.dump(ari, f, pickle.HIGHEST_PROTOCOL)
+    # # print(ari)
+    #
+    # avg_SIR.to_csv('US_SIR_Org.csv', index=False)
+    # print(avg_SIR)
+    #
+    # with open('US_Sizes_Org.pkl', 'wb') as f:
+    #     pickle.dump(sizes, f)
+    # print(sizes)
 
 #     pass
 #     #     E_list, weights = er.Mtrx_Elist(rg.ER_gen(500, 1))

@@ -12,7 +12,7 @@ def Mtrx_Elist(A):
     elist = np.vstack((i, j))
     weights = A[np.triu(A) != 0]  # Find weights
 
-    return elist.transpose(), weights.tolist()
+    return elist.transpose(), weights
 
 
 # Legacy code
@@ -46,12 +46,33 @@ def Elist_Mtrx(E_list, weights):
     return A
 
 
+# Transform edge list to sparse adj matrix
+# Par:
+## E_list; edge list
+## weights; edge weights
+### Make sparse adj matrix for future?
+def Elist_Mtrx_s(E_list, weights):
+    n = np.max(E_list) + 1  # +1 for Python 0-index
+    A = sparse.csr_matrix((weights, (E_list[:, 0], E_list[:, 1])), shape=(n, n))
+    A = A + A.transpose()
+
+    return A
+
+
 # Compute Laplacian, L
 # Par:
 ## A; adj matrix
 def Lap(A):
     L = np.diag(np.sum(abs(A), 1)) - A
-    return (L)
+    return L
+
+
+# Compute Laplacian, L
+# Par:
+## A; sparse adj matrix
+def Lap_s(A):
+    L = sparse.csgraph.laplacian(A)
+    return L
 
 
 # Compute signed-edge vertex incidence matrix, B
@@ -77,12 +98,12 @@ def WDiag(weights):
     m = len(weights)
 
     weights_sqrt = np.sqrt(weights)  # element-wise sqrt of weights for later use
-    W = sparse.dia_matrix((weights_sqrt, [0]), shape=(m, m))  # Use more efficent dia sparse matrix
+    W = sparse.dia_matrix((weights_sqrt, [0]), shape=(m, m))  # Use more efficient dia sparse matrix
 
     return W
 
 
-# EffR Aproximation
+# EffR Approximation
 # method from Koutis et al.
 # Par:
 ## E_list; edge list
@@ -100,10 +121,10 @@ def EffR(E_list, weights, epsilon, type, tol=1e-10, precon=False):
     m = np.shape(E_list)[0]
     n = np.max(E_list) + 1
 
-    # Obtain necessary matrcies from edge list and edge weights
-    A = Elist_Mtrx(E_list, weights)  # adj matrix - go to sparse?
-    L = Lap(A)  # Laplacian (array) - go to sparse? Also needed for solver
-    B = sVIM(E_list)  # vertex indicies matrix (crs)
+    # Obtain necessary matrices from edge list and edge weights
+    A = Elist_Mtrx_s(E_list, weights)  # adj matrix - sparse
+    L = Lap_s(A)  # Laplacian (sparse array)
+    B = sVIM(E_list)  # vertex indices matrix (crs)
     W = WDiag(weights)  # Diagonal weight matrix (dia)
     scale = np.ceil(np.log2(n)) / epsilon  # set scale/resolution for Johnson-Lindenstrauss projection
 
@@ -113,7 +134,7 @@ def EffR(E_list, weights, epsilon, type, tol=1e-10, precon=False):
         M = sparse.linalg.LinearOperator((n, n), M_inverse.solve)
 
     # Ignore preconditioner if precon is False
-    elif not (precon):
+    elif not precon:
         M = None
 
     # If preconditioner is passed, set M to precon
@@ -123,7 +144,7 @@ def EffR(E_list, weights, epsilon, type, tol=1e-10, precon=False):
     # Exact effR values
     if type == 'ext':
         effR = np.zeros(shape=(1, m))
-        if M == None:  # If no preconditioner
+        if M is None:  # If no preconditioner
             for i in range(m):
                 Br = B[i, :].toarray()
                 Z = cg(L, Br.transpose(), tol=tol)[0]
@@ -137,9 +158,9 @@ def EffR(E_list, weights, epsilon, type, tol=1e-10, precon=False):
                 effR[:, i] = R_eff[0]
 
         effR = effR[0]
-        return effR.tolist()
+        return effR
 
-    # Orignal Spielman-Srivastava algorithm
+    # Original Spielman-Srivastava algorithm
     if type == 'spl':
 
         # Define Q in type coo sparse matrix
@@ -152,7 +173,7 @@ def EffR(E_list, weights, epsilon, type, tol=1e-10, precon=False):
         SYS = Q @ W @ B  # create system for Johnson-Lindenstrauss projection
         Z = np.zeros(shape=(int(scale), n))  # Create Z matrix to solve smaller dim SYS for effR
 
-        if M == None:  # If no preconditioner
+        if M is None:  # If no preconditioner
             for i in range(int(scale)):
                 SYSr = SYS[i, :].toarray()
                 Z[i, :] = cg(L, SYSr.transpose(), tol=tol)[0]
@@ -163,13 +184,13 @@ def EffR(E_list, weights, epsilon, type, tol=1e-10, precon=False):
 
         effR = np.sum(np.square(Z[:, E_list[:, 0]] - Z[:, E_list[:, 1]]),
                       axis=0)  # Calculate distance between poitns for effR
-        return effR.tolist()
+        return effR
 
     # Koutis et al. algorithm
     if type == 'kts':
         effR_res = np.zeros(shape=(1, m))
 
-        if M == None:
+        if M is None:
             for i in range(int(scale)):
                 ons1 = sparse.random(1, m, 1, format='csr') > 0.5
                 ons2 = sparse.random(1, m, 1, format='csr') > 0
@@ -202,4 +223,4 @@ def EffR(E_list, weights, epsilon, type, tol=1e-10, precon=False):
                 effR_res = effR_res + np.abs(np.square(Z[E_list[:, 0]] - Z[E_list[:, 1]]))
 
         effR = effR_res[0]
-        return effR.tolist()
+        return effR

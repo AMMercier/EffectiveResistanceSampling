@@ -1,5 +1,6 @@
 import random as ran
 import numpy as np
+import scipy.sparse as sparse
 from EffRApprox import Mtrx_Elist
 
 
@@ -60,6 +61,32 @@ def Spl_EffRSparse(n, E_list, weights, q, effR, seed=None):
     return H + np.transpose(H)
 
 
+# Create a effective resistance sparsifer with sparse matrix
+# From Spielman and Srivastava 2008
+# Input:
+# adj - Adj matrix
+# q - number of samples
+# R - Matrix of effective resistances (other types of edge importance in the future, possibly)
+# Output:
+# H - effective resistance sparsifer adj matrix
+def Spl_EffRSparse_s(n, E_list, weights, q, effR, seed=None):
+    ran.seed(seed)
+    P = []
+    H_list = np.zeros((len(E_list),3))
+    for i in range(len(E_list)):
+        w_e = weights[i]
+        R_e = effR[i]
+        P.append((w_e * R_e) / (n - 1))
+    Pn = np.array(normprobs(P))
+    C = ran.choices(list(zip(E_list, weights, Pn, range(len(E_list)))), Pn, k=q)
+    for x in range(q):
+        e, w_e, p_e, i = C[x][0], C[x][1], C[x][2], C[x][3]
+        H_list[i,2] += w_e / (q * p_e)
+        H_list[i,0:2] = e[0], e[1]
+    H = sparse.csr_matrix((H_list[:,2], (E_list[:,0], E_list[:,1])), shape=(n,n))
+    return H + H.transpose()
+
+
 # Create a random uniform sparsifier
 # Input:
 # adj - Adj matrix
@@ -76,7 +103,26 @@ def UniSampleSparse(n, E_list, weights, q, seed=None):
         w_e = C[x][1]
         p_e = C[x][2]
         H[e[0]][e[1]] += w_e / (q * p_e)
-    return H + np.transpose(H)
+    return H + H.transpose()
+
+
+# Create a random uniform sparsifier
+# Input:
+# adj - Adj matrix
+# q - number of samples
+# Output:
+# H
+def UniSampleSparse_s(n, E_list, weights, q, seed=None):
+    ran.seed(seed)
+    Pn = [1 / len(E_list)] * len(E_list)
+    C = ran.choices(list(zip(E_list, weights, Pn, range(len(E_list)))), Pn, k=q)
+    H_list = np.zeros((len(E_list),3))
+    for x in range(q):
+        e, w_e, p_e, i = C[x][0], C[x][1], C[x][2], C[x][3]
+        H_list[i,2] += w_e / (q * p_e)
+        H_list[i,0:2] = e[0], e[1]
+    H = sparse.csr_matrix((H_list[:, 2], (E_list[:, 0], E_list[:, 1])), shape=(n, n))
+    return H + H.transpose()
 
 
 # Create a sparsifier with edge weights
@@ -85,17 +131,29 @@ def UniSampleSparse(n, E_list, weights, q, seed=None):
 # q - number of samples
 # Output:
 # H
-def WeightSparse(n, E_list, weights, q, seed=None):
+def WeightSparse_s(n, E_list, weights, q, seed=None):
     ran.seed(seed)
     Pn = normprobs(weights)
-    C = ran.choices(list(zip(E_list, weights, Pn)), Pn, k=q)
-    H = np.zeros(shape=(n, n))
+    C = ran.choices(list(zip(E_list, weights, Pn, range(len(E_list)))), Pn, k=q)
+    H_list = np.zeros((len(E_list),3))
     for x in range(q):
-        e = C[x][0]
-        w_e = C[x][1]
-        p_e = C[x][2]
-        H[e[0]][e[1]] += w_e / (q * p_e)
+        e, w_e, p_e, i = C[x][0], C[x][1], C[x][2], C[x][3]
+        H_list[i,2] += w_e / (q * p_e)
+        H_list[i,0:2] = e[0], e[1]
+    H = sparse.csr_matrix((H_list[:, 2], (E_list[:, 0], E_list[:, 1])), shape=(n, n))
     return H + np.transpose(H)
+
+
+def Thresh(n, E_list, weights, per):
+    m = int(np.ceil(per * len(weights)))
+    n_weights = [0] * len(weights)
+    weights = list(enumerate(weights))
+    weights = sorted(weights, key=lambda tup: tup[1], reverse=True)
+    weights = weights[0:m]
+    for i in weights:
+        n_weights[i[0]] = i[1]
+    H = sparse.csr_matrix((n_weights, (E_list[:,0], E_list[:,1])), shape=(n,n))
+    return H
 
 
 # Create a S-S sparsifier with a specified number of edges.
