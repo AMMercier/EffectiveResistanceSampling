@@ -49,3 +49,11 @@ EffR_Sparse = network.spl(q, Effective_R, seed=2020)
 * **q** The number of samples to take with replacement to create the effective resistance sparsifier by random sampling. 
 * **effR** Effective resistance values for each edge.
 * **seed=None** Seed to create the effective resistance sparsifier through random sampling.
+
+## Authors
+
+* **Alexander M. Mercier** - [EffectiveResistanceSampling](https://github.com/AMMercier/EffectiveResistanceSampling)
+
+## License
+
+* **GNU General Public License**
