@@ -50,6 +50,10 @@ EffR_Sparse = network.spl(q, Effective_R, seed=2020)
 * **effR** Effective resistance values for each edge.
 * **seed=None** Seed to create the effective resistance sparsifier through random sampling.
 
+**Mobility Data**
+* Mobility data in the form of a directional network from the United States for the year 2016 can be found in the following DropBox link: https://www.dropbox.com/sh/2ennvbkb5drhdb1/AACB0ZeZAqavpHqDIARGzU7ya?dl=0
+* The real-world mobility network was constructed from publicly available United States Census Bureau inter-census-tract commuting flows for all fifty states. Each node is a single census tract, and integer edge weights denote the amount of inter-census-tract human mobility provided by the United States Census Bureau through a summary of Longitudinal Employer-Household Dynamics (LEHD) Origin-Destination Employment Statistics (LODES) across Origin-Destination (OD), Residence Area Characteristic (RAC), and Workplace Area Characteristic (WAC) data types for the year 2016.
+
 ## Authors
 
 * **Alexander M. Mercier** - [EffectiveResistanceSampling](https://github.com/AMMercier/EffectiveResistanceSampling)
